@@ -1,0 +1,46 @@
+# docker-compose.yml
+# XHS_AutoPublisher_v2 - Docker 编排配置
+# 基于 DEVELOPMENT_GUIDE.md 第3.3节
+
+version: '3.8'
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://${N8N_HOST}/
+      - GENERIC_TIMEZONE=Asia/Shanghai
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+      - ./backups:/backups
+    networks:
+      - n8n-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./nginx/certbot:/var/www/certbot
+    depends_on:
+      - n8n
+    networks:
+      - n8n-network
+
+networks:
+  n8n-network:
+    driver: bridge

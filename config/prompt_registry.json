@@ -1,0 +1,230 @@
+{
+  "prompts": [
+    {
+      "prompt_id": "TOPIC_GEN",
+      "current_version": "V2.1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "初始版本",
+          "file_path": "config/prompts/topic_generation.md",
+          "status": "deprecated"
+        },
+        {
+          "version": "V1.1",
+          "created_at": "2024-12-11",
+          "description": "基于10条样本诊断优化：强化数字+场景约束，禁止知乎/PPT/blog式标题，新增5个标题公式示例",
+          "file_path": "config/prompts/topic_generation_v1_1.md",
+          "status": "deprecated",
+          "changelog": [
+            "角色设定更聚焦：小红书爆款选题策划师",
+            "字数限制收紧：18-25字，最长28字",
+            "新增MUST NOT约束：禁止知乎问题式/PPT式/技术blog式",
+            "新增5个标题公式参考",
+            "新增自检清单"
+          ]
+        },
+        {
+          "version": "V2",
+          "created_at": "2024-12-11",
+          "description": "去AI味重构：95后博主人设 + 5种风格槽位 + 情绪钩子公式 + emoji规则 + 反AI味自检",
+          "file_path": "config/prompts/topic_generation_v2.md",
+          "status": "deprecated",
+          "changelog": [
+            "角色重塑：从「爆款选题策划师」→「95后小红书博主」，强调朋友圈/姐妹群语感",
+            "风格规则：新增口语化、碎片化、情绪先行、制造悬念4条硬性规则",
+            "AI味禁止清单：大幅扩展，禁止「学习/提升/掌握/技巧/方法」等教科书词汇",
+            "标题结构公式：[情绪钩子]+[核心爆点]+[身份标签]+[结果暗示]",
+            "5种风格槽位：惊叹型/秘密型/反差型/痛点型/结果型，每次输出5个不同风格",
+            "emoji规则：明确2-4个/位置/高频emoji",
+            "字数收紧：18-24字最佳，绝对不超26字",
+            "反AI味自检机制：5条检查项，不通过必须重写",
+            "语感参考：提供6条真实爆款语感示例"
+          ]
+        },
+        {
+          "version": "V2.1",
+          "created_at": "2024-12-11",
+          "description": "稳定性优化：精简指令结构 + 消除规则冲突 + 强化输出格式一致性",
+          "file_path": "config/prompts/topic_generation_v2_1.md",
+          "status": "active",
+          "changelog": [
+            "移除why_effective字段：避免角色切换（博主→分析师），减少格式出错",
+            "禁止清单集中化：从3处分散→单一表格，消除重复",
+            "自检机制内部化：明确「内部执行，不输出」，减少token消耗",
+            "字数标准统一：消除26字/28字矛盾，统一为≤26字",
+            "emoji规则合并：从2节→1节，指令集中",
+            "示例精简：16条→5条核心示例，防止过度抄袭",
+            "风格槽位强化：增加slot序号+核心特征列，区分度更清晰",
+            "输出约束明确：新增「只输出JSON，不要输出任何解释」"
+          ]
+        }
+      ]
+    },
+    {
+      "prompt_id": "CONTENT_GEN",
+      "current_version": "V1.1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "初始版本",
+          "file_path": "config/prompts/content_creation.md",
+          "status": "deprecated"
+        },
+        {
+          "version": "V1.1",
+          "created_at": "2024-12-11",
+          "description": "基于10条样本诊断优化：强化真实分享风格，禁止PPT/论文腔，要求案例≥2个",
+          "file_path": "config/prompts/content_creation_v1_1.md",
+          "status": "active",
+          "changelog": [
+            "角色设定更明确：真实分享型博主，非官方教程",
+            "结构要求更具体：痛点场景+转折→2-3案例→可执行建议",
+            "案例数量硬性要求：≥2个",
+            "新增MUST NOT约束：禁止PPT公关稿/技术blog/论文腔",
+            "字数限制收紧：600-900字",
+            "新增好内容示例片段"
+          ]
+        }
+      ]
+    },
+    {
+      "prompt_id": "REVIEW",
+      "current_version": "V1.1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "初始版本（6步拆分）",
+          "file_path": "config/prompts/review_steps.md",
+          "status": "deprecated"
+        },
+        {
+          "version": "V1.1",
+          "created_at": "2024-12-11",
+          "description": "基于10条样本诊断优化：评分视角从写作质量→平台体验，新增真实感维度，修正误判逻辑",
+          "file_path": "config/prompts/review_v1_1.md",
+          "status": "active",
+          "changelog": [
+            "评分视角转变：从作文标准→小红书用户真实反应",
+            "维度重构：5维度→6维度（新增真实感）",
+            "权重调整：点击冲动25%，首屏留存20%，真实感20%，干货密度15%，互动设计10%，平台合规10%",
+            "决策阈值细化：80/70/60三档",
+            "新增常见误判提醒：口语化是优点不是缺点"
+          ]
+        }
+      ]
+    },
+    {
+      "prompt_id": "REVIEW_STEP0",
+      "current_version": "V1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "账号定位检查（V1.1已合并到REVIEW单一Prompt）",
+          "file_path": "config/prompts/review_steps.md",
+          "status": "deprecated"
+        }
+      ]
+    },
+    {
+      "prompt_id": "REVIEW_STEP1",
+      "current_version": "V1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "三秒测试（V1.1已合并到REVIEW单一Prompt）",
+          "file_path": "config/prompts/review_steps.md",
+          "status": "deprecated"
+        }
+      ]
+    },
+    {
+      "prompt_id": "REVIEW_STEP2",
+      "current_version": "V1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "首屏测试（V1.1已合并到REVIEW单一Prompt）",
+          "file_path": "config/prompts/review_steps.md",
+          "status": "deprecated"
+        }
+      ]
+    },
+    {
+      "prompt_id": "REVIEW_STEP3",
+      "current_version": "V1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "全文质量（V1.1已合并到REVIEW单一Prompt）",
+          "file_path": "config/prompts/review_steps.md",
+          "status": "deprecated"
+        }
+      ]
+    },
+    {
+      "prompt_id": "REVIEW_STEP4",
+      "current_version": "V1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "互动设计（V1.1已合并到REVIEW单一Prompt）",
+          "file_path": "config/prompts/review_steps.md",
+          "status": "deprecated"
+        }
+      ]
+    },
+    {
+      "prompt_id": "REVIEW_STEP5",
+      "current_version": "V1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "平台合规（V1.1已合并到REVIEW单一Prompt）",
+          "file_path": "config/prompts/review_steps.md",
+          "status": "deprecated"
+        }
+      ]
+    },
+    {
+      "prompt_id": "IMAGE_DESC",
+      "current_version": "V1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "图片描述生成",
+          "file_path": "config/prompts/image_prompt.md",
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "prompt_id": "SCORE_CALC",
+      "current_version": "V1",
+      "versions": [
+        {
+          "version": "V1",
+          "created_at": "2024-12-11",
+          "description": "评分计算",
+          "file_path": "config/prompts/score_calculation.md",
+          "status": "active"
+        }
+      ]
+    }
+  ],
+  "last_updated": "2024-12-11",
+  "notes": {
+    "V1.1_optimization": "基于10条历史样本诊断，主要解决：1)标题不够小红书风格 2)内容PPT/论文腔 3)审核评分偏作文标准",
+    "review_architecture_change": "V1.1将原6步拆分审核合并为单一REVIEW Prompt，简化调用流程"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "project": {
+    "name": "XHS_AutoPublisher_v2",
+    "version": "1.0.0",
+    "environment": "production"
+  },
+  "ai": {
+    "claude": {
+      "model": "claude-sonnet-4-20250514",
+      "max_tokens": 4000,
+      "rate_limit_ms": 1000
+    },
+    "gemini": {
+      "model": "gemini-2.0-flash-exp",
+      "image_width": 1080,
+      "image_height": 1440
+    }
+  },
+  "scoring": {
+    "thresholds": {
+      "auto_approve": 85,
+      "human_review": 70,
+      "auto_reject": 0
+    },
+    "weights": {
+      "step0_account_fit": 0.10,
+      "step1_click_power": 0.30,
+      "step2_first_screen": 0.15,
+      "step3_content_quality": 0.25,
+      "step4_interaction": 0.10,
+      "step5_compliance": 0.10
+    }
+  },
+  "publishing": {
+    "max_per_day": 3,
+    "min_interval_hours": 4,
+    "default_schedule": {
+      "weekday": ["07:00", "12:00", "19:00"],
+      "weekend": ["10:00", "15:00", "20:00"]
+    }
+  },
+  "content": {
+    "title_length": {
+      "min": 15,
+      "max": 30
+    },
+    "body_length": {
+      "min": 800,
+      "max": 1200
+    },
+    "tags_count": {
+      "min": 8,
+      "max": 10
+    }
+  },
+  "hot_topics": {
+    "fetch_interval_hours": 2,
+    "sources": ["weibo", "zhihu"],
+    "max_per_source": 20,
+    "relevance_threshold": 70
+  },
+  "notifications": {
+    "telegram": {
+      "enabled": true,
+      "events": ["content_created", "content_approved", "content_rejected", "publish_success", "publish_failed", "error"]
+    }
+  },
+  "data_retention": {
+    "execution_logs_days": 30,
+    "interaction_data_days": 90
+  }
+}

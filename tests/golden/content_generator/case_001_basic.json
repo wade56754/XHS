@@ -1,0 +1,35 @@
+{
+  "case_id": "CG_001",
+  "case_name": "基础选题生成",
+  "workflow": "content_generator_v1",
+  "description": "验证基础选题生成流程",
+  "input": {
+    "test_mode": true,
+    "keyword": "AI自动化",
+    "target_audience": "开发者",
+    "content_style": "干货教程"
+  },
+  "expected_output": {
+    "structure": {
+      "content_id": "string:uuid",
+      "title": "string:length:15-30",
+      "content_body": "string:length:800-1200",
+      "ai_score": "number:range:0-100",
+      "status": "enum:DRAFT|AI_REVIEWED|REJECTED",
+      "tags": "array:length:8-10"
+    },
+    "business_rules": [
+      { "rule": "ai_score >= 70", "implies": "status == AI_REVIEWED" },
+      { "rule": "ai_score < 70", "implies": "status == REJECTED" }
+    ]
+  },
+  "expected_logs": [
+    { "event_type": "WORKFLOW_START" },
+    { "event_type": "AI_API_CALL", "context.task_type": "generate_topic" },
+    { "event_type": "AI_API_CALL", "context.task_type": "create_content" },
+    { "event_type": "CONTENT_CREATED" },
+    { "event_type": "WORKFLOW_SUCCESS" }
+  ],
+  "created_at": "2024-12-11",
+  "last_verified": "2024-12-11"
+}

@@ -1,0 +1,44 @@
+# .gitignore
+# XHS_AutoPublisher_v2
+
+# 环境变量
+.env
+.env.*
+!.env.example
+
+# N8N数据（含凭证）
+n8n_data/
+
+# 备份文件
+backups/
+
+# SSL证书
+nginx/ssl/
+
+# 日志文件
+*.log
+logs/
+
+# 测试结果
+tests/results/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+
+# Node
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
