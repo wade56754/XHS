@@ -1,0 +1,366 @@
+{
+  "name": "WF-RedInk-Generate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "redink-generate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook 触发",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "redink-generate"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://redink:5000/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topic: $json.body.topic || $json.body.title, style: $json.body.style || '干货分享', page_count: $json.body.page_count || 6 }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "call-redink",
+      "name": "调用 RedInk 生成",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "id": "wait-10s",
+      "name": "等待 10 秒",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://redink:5000/api/status/{{ $('调用 RedInk 生成').item.json.task_id }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-status",
+      "name": "查询生成状态",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-completed",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-completed",
+      "name": "是否完成?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-failed",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "failed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-failed",
+      "name": "是否失败?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 520]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://redink:5000/api/images/{{ $('调用 RedInk 生成').item.json.task_id }}?format=json",
+        "options": {}
+      },
+      "id": "get-images",
+      "name": "获取生成图片",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 准备飞书多维表格的数据格式\nconst statusResult = $('查询生成状态').item.json;\nconst imagesResult = $input.item.json;\nconst originalInput = $('Webhook 触发').item.json.body;\n\n// 构建飞书记录\nconst feishuRecord = {\n  fields: {\n    // 如果有 record_id，则更新现有记录\n    ...(originalInput.record_id && { record_id: originalInput.record_id }),\n    \n    // 图片相关字段\n    image_status: '已完成',\n    image_task_id: statusResult.task_id,\n    cover_image_url: imagesResult.cover_url || statusResult.result?.cover_url,\n    content_images: JSON.stringify(imagesResult.pages || statusResult.result?.pages || []),\n    image_outline: JSON.stringify(statusResult.result?.outline || []),\n    image_generated_at: new Date().toISOString()\n  }\n};\n\nreturn {\n  json: feishuRecord,\n  pairedItem: $input.item.pairedItem\n};"
+      },
+      "id": "prepare-feishu-data",
+      "name": "准备飞书数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.FEISHU_APP_TOKEN }}/tables/{{ $env.FEISHU_CONTENT_TABLE_ID }}/records",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "save-to-feishu",
+      "name": "存入飞书表格",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 180],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, task_id: $('调用 RedInk 生成').item.json.task_id, message: '图片生成完成并已存入飞书', images_count: $('查询生成状态').item.json.result?.pages?.length || 0 }) }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "返回成功响应",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 180]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, task_id: $('调用 RedInk 生成').item.json.task_id, error: $('查询生成状态').item.json.error || '图片生成失败' }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "respond-failed",
+      "name": "返回失败响应",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 640]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 记录失败日志到飞书\nconst statusResult = $('查询生成状态').item.json;\nconst originalInput = $('Webhook 触发').item.json.body;\n\nconst logRecord = {\n  fields: {\n    timestamp: new Date().toISOString(),\n    level: 'ERROR',\n    workflow_id: 'WF-RedInk-Generate',\n    message: `图片生成失败: ${statusResult.error || '未知错误'}`,\n    task_id: statusResult.task_id,\n    input_topic: originalInput.topic || originalInput.title\n  }\n};\n\nreturn { json: logRecord };"
+      },
+      "id": "log-failure",
+      "name": "记录失败日志",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 检查是否超过最大重试次数\nconst maxRetries = 30; // 最多等待 30 * 10 = 300 秒 = 5 分钟\nconst currentRetry = $('等待 10 秒').item.json._retryCount || 0;\n\nif (currentRetry >= maxRetries) {\n  // 超时，标记为失败\n  return {\n    json: {\n      ...$input.item.json,\n      status: 'failed',\n      error: '生成超时，已等待5分钟'\n    }\n  };\n}\n\n// 继续等待\nreturn {\n  json: {\n    ...$input.item.json,\n    _retryCount: currentRetry + 1\n  }\n};"
+      },
+      "id": "increment-retry",
+      "name": "重试计数",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 420]
+    }
+  ],
+  "connections": {
+    "Webhook 触发": {
+      "main": [
+        [
+          {
+            "node": "调用 RedInk 生成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "调用 RedInk 生成": {
+      "main": [
+        [
+          {
+            "node": "等待 10 秒",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "等待 10 秒": {
+      "main": [
+        [
+          {
+            "node": "查询生成状态",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询生成状态": {
+      "main": [
+        [
+          {
+            "node": "是否完成?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "是否完成?": {
+      "main": [
+        [
+          {
+            "node": "获取生成图片",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "是否失败?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "是否失败?": {
+      "main": [
+        [
+          {
+            "node": "记录失败日志",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "重试计数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "重试计数": {
+      "main": [
+        [
+          {
+            "node": "等待 10 秒",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取生成图片": {
+      "main": [
+        [
+          {
+            "node": "准备飞书数据",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "准备飞书数据": {
+      "main": [
+        [
+          {
+            "node": "存入飞书表格",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "存入飞书表格": {
+      "main": [
+        [
+          {
+            "node": "返回成功响应",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "记录失败日志": {
+      "main": [
+        [
+          {
+            "node": "返回失败响应",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "RedInk",
+      "createdAt": "2024-12-18T00:00:00.000Z",
+      "updatedAt": "2024-12-18T00:00:00.000Z"
+    },
+    {
+      "name": "图片生成",
+      "createdAt": "2024-12-18T00:00:00.000Z",
+      "updatedAt": "2024-12-18T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-18T00:00:00.000Z",
+  "versionId": "1"
+}

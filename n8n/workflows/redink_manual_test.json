@@ -1,0 +1,227 @@
+{
+  "name": "RedInk 手动测试",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "topic",
+              "name": "topic",
+              "value": "2024年最火的3个护肤成分",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-topic",
+      "name": "设置主题",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:12398/api/outline",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topic: $json.topic }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "outline-request",
+      "name": "调用 RedInk 生成大纲",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-result",
+      "name": "检查结果",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [950, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "success",
+              "type": "string"
+            },
+            {
+              "id": "topic",
+              "name": "topic",
+              "value": "={{ $('设置主题').item.json.topic }}",
+              "type": "string"
+            },
+            {
+              "id": "page_count",
+              "name": "page_count",
+              "value": "={{ $json.pages.length }}",
+              "type": "number"
+            },
+            {
+              "id": "pages",
+              "name": "pages",
+              "value": "={{ $json.pages }}",
+              "type": "array"
+            },
+            {
+              "id": "outline",
+              "name": "outline",
+              "value": "={{ $json.outline }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "success-output",
+      "name": "成功输出",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "error",
+              "type": "string"
+            },
+            {
+              "id": "error",
+              "name": "error",
+              "value": "={{ $json.error || '生成失败' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "error-output",
+      "name": "错误输出",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1200, 400]
+    }
+  ],
+  "connections": {
+    "手动触发": {
+      "main": [
+        [
+          {
+            "node": "设置主题",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "设置主题": {
+      "main": [
+        [
+          {
+            "node": "调用 RedInk 生成大纲",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "调用 RedInk 生成大纲": {
+      "main": [
+        [
+          {
+            "node": "检查结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查结果": {
+      "main": [
+        [
+          {
+            "node": "成功输出",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "错误输出",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "RedInk"
+    },
+    {
+      "name": "测试"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-12-18T00:00:00.000Z",
+  "versionId": "1"
+}

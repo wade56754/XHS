@@ -41,6 +41,44 @@ services:
     networks:
       - n8n-network
 
+  # ============================================
+  # RedInk 图文生成服务
+  # 参考: docs/REDINK_INTEGRATION_PLAN.md
+  # ============================================
+  redink:
+    build:
+      context: ./redink
+      dockerfile: Dockerfile
+    image: redink:latest
+    container_name: redink
+    restart: unless-stopped
+    ports:
+      - "5001:5000"
+    environment:
+      # AI 文本生成配置
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # AI 图像生成配置
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # 服务配置
+      - FLASK_ENV=production
+      - TZ=Asia/Shanghai
+    volumes:
+      # 配置文件 (需要手动创建)
+      - ./redink/text_providers.yaml:/app/text_providers.yaml:ro
+      - ./redink/image_providers.yaml:/app/image_providers.yaml:ro
+      # 持久化数据
+      - ./redink_data/history:/app/history
+      - ./redink_data/images:/app/images
+    networks:
+      - n8n-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
 networks:
   n8n-network:
     driver: bridge
