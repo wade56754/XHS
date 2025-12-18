@@ -1,0 +1,39 @@
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "npx",
+      "args": ["n8n-mcp"],
+      "env": {
+        "MCP_MODE": "stdio",
+        "LOG_LEVEL": "error",
+        "DISABLE_CONSOLE_OUTPUT": "true"
+      }
+    },
+    "ssh-manager": {
+      "command": "npx",
+      "args": ["-y", "mcp-ssh-manager"]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    },
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@kazuph/mcp-fetch"]
+    },
+    "lark": {
+      "command": "npx",
+      "args": ["-y", "@larksuiteoapi/lark-mcp"],
+      "env": {
+        "LARK_APP_ID": "your_app_id_here",
+        "LARK_APP_SECRET": "your_app_secret_here",
+        "LARK_APP_TOKEN": "your_app_token_here",
+        "LARK_COOKIE_TABLE_ID": "your_table_id_here"
+      }
+    }
+  }
+}
