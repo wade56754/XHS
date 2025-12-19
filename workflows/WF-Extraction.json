@@ -1,0 +1,499 @@
+{
+  "name": "WF-Extraction - XHS内容提取",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300],
+      "notes": "每15分钟自动执行"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "xhs-extraction",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 500],
+      "webhookId": "xhs-extraction",
+      "notes": "手动触发入口"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "={{ $env.LARK_APP_ID }}"
+            },
+            {
+              "name": "app_secret",
+              "value": "={{ $env.LARK_APP_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-lark-token",
+      "name": "Get Lark Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 400],
+      "notes": "获取飞书访问令牌"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_TOPICS_TABLE_ID + '/records' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "CurrentValue.[status]=\"待提取\""
+            },
+            {
+              "name": "page_size",
+              "value": "10"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "query-topics",
+      "name": "Query Topics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 400],
+      "notes": "查询待提取的选题"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-records",
+              "leftValue": "={{ $json.data.items.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-topics",
+      "name": "Has Topics?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 400],
+      "notes": "检查是否有待提取选题"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取选题列表\nconst items = $input.first().json.data.items || [];\n\nconst topics = items.map(item => ({\n  record_id: item.record_id,\n  note_id: item.fields.note_id,\n  title: item.fields.title,\n  author: item.fields.author,\n  keyword_id: item.fields.keyword_id\n}));\n\nreturn topics.map(t => ({ json: t }));"
+      },
+      "id": "extract-topics",
+      "name": "Extract Topics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300],
+      "notes": "提取选题数据"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_TOPICS_TABLE_ID + '/records/' + $json.record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"提取中\",\n    \"locked_at\": \"{{ $now.toISO() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "lock-topic",
+      "name": "Lock Topic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 300],
+      "notes": "锁定选题状态为提取中"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRAWLER_API_URL + '/api/note/detail' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.CRAWLER_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"note_ids\": [\"{{ $node['Extract Topics'].json.note_id }}\"]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "get-note-detail",
+      "name": "Get Note Detail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 300],
+      "notes": "调用爬虫API获取笔记详情"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-items",
+              "leftValue": "={{ $json.data?.items?.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-detail-result",
+      "name": "Detail Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 300],
+      "notes": "检查详情获取是否成功"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 转换笔记详情为Source记录格式\nconst detailResult = $input.first().json;\nconst topicData = $node['Extract Topics'].json;\nconst noteDetail = detailResult.data?.items?.[0] || {};\n\n// 提取笔记内容\nconst sourceRecord = {\n  fields: {\n    topic_id: topicData.record_id,\n    note_id: topicData.note_id,\n    original_title: noteDetail.title || topicData.title,\n    original_content: noteDetail.desc || noteDetail.content || '',\n    original_images: JSON.stringify(noteDetail.images || noteDetail.image_list || []),\n    author_name: noteDetail.user?.nickname || topicData.author,\n    author_id: noteDetail.user?.user_id || '',\n    likes_count: noteDetail.liked_count || noteDetail.interact_info?.liked_count || 0,\n    comments_count: noteDetail.comments_count || noteDetail.interact_info?.comment_count || 0,\n    collects_count: noteDetail.collected_count || noteDetail.interact_info?.collected_count || 0,\n    status: '待生成',\n    extracted_at: new Date().toISOString()\n  }\n};\n\nreturn [{ json: { record: sourceRecord, topic_record_id: topicData.record_id } }];"
+      },
+      "id": "transform-detail",
+      "name": "Transform Detail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 200],
+      "notes": "转换笔记详情格式"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_SOURCE_TABLE_ID + '/records' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.record) }}",
+        "options": {}
+      },
+      "id": "save-to-source",
+      "name": "Save to Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 200],
+      "notes": "写入Source表"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_TOPICS_TABLE_ID + '/records/' + $json.topic_record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"已提取\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-topic-success",
+      "name": "Update Topic Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2750, 200],
+      "notes": "更新选题状态为已提取"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_TOPICS_TABLE_ID + '/records/' + $node['Extract Topics'].json.record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"提取失败\",\n    \"error_message\": \"{{ $json.error?.message || 'Note detail not found' }}\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-topic-failed",
+      "name": "Update Topic Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2250, 400],
+      "notes": "更新选题状态为提取失败"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, message: 'Extraction completed' } }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3000, 200],
+      "notes": "返回成功响应"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, message: 'No topics to process' } }}"
+      },
+      "id": "respond-no-topics",
+      "name": "Respond No Topics",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 500],
+      "notes": "无选题时返回"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Lark Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Lark Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lark Token": {
+      "main": [
+        [
+          {
+            "node": "Query Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Topics": {
+      "main": [
+        [
+          {
+            "node": "Has Topics?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Topics?": {
+      "main": [
+        [
+          {
+            "node": "Extract Topics",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Topics": {
+      "main": [
+        [
+          {
+            "node": "Lock Topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock Topic": {
+      "main": [
+        [
+          {
+            "node": "Get Note Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Note Detail": {
+      "main": [
+        [
+          {
+            "node": "Detail Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detail Success?": {
+      "main": [
+        [
+          {
+            "node": "Transform Detail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Topic Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Detail": {
+      "main": [
+        [
+          {
+            "node": "Save to Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Source": {
+      "main": [
+        [
+          {
+            "node": "Update Topic Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Topic Success": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "XHS-Pipeline"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {}
+}

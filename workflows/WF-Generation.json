@@ -1,0 +1,630 @@
+{
+  "name": "WF-Generation - AI内容生成",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 20
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300],
+      "notes": "每20分钟自动执行"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "xhs-generation",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 500],
+      "webhookId": "xhs-generation",
+      "notes": "手动触发入口"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "={{ $env.LARK_APP_ID }}"
+            },
+            {
+              "name": "app_secret",
+              "value": "={{ $env.LARK_APP_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-lark-token",
+      "name": "Get Lark Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 400],
+      "notes": "获取飞书访问令牌"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_SOURCE_TABLE_ID + '/records' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "CurrentValue.[status]=\"待生成\""
+            },
+            {
+              "name": "page_size",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "query-sources",
+      "name": "Query Sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 400],
+      "notes": "查询待生成的素材"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-records",
+              "leftValue": "={{ $json.data.items.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-sources",
+      "name": "Has Sources?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 400],
+      "notes": "检查是否有待生成素材"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_PROMPTS_TABLE_ID + '/records' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "CurrentValue.[is_active]=true"
+            },
+            {
+              "name": "page_size",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-prompt-template",
+      "name": "Get Prompt Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 300],
+      "notes": "获取活跃的提示词模板"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取素材和提示词\nconst sourcesData = $node['Query Sources'].json;\nconst promptData = $input.first().json;\n\nconst sources = sourcesData.data?.items || [];\nconst promptTemplate = promptData.data?.items?.[0]?.fields?.prompt_content || '请根据以下内容生成小红书风格的文案';\n\nconst result = sources.map(item => ({\n  record_id: item.record_id,\n  note_id: item.fields.note_id,\n  original_title: item.fields.original_title,\n  original_content: item.fields.original_content,\n  original_images: item.fields.original_images,\n  prompt_template: promptTemplate\n}));\n\nreturn result.map(r => ({ json: r }));"
+      },
+      "id": "prepare-generation",
+      "name": "Prepare Generation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300],
+      "notes": "准备生成数据"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_SOURCE_TABLE_ID + '/records/' + $json.record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"生成中\",\n    \"locked_at\": \"{{ $now.toISO() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "lock-source",
+      "name": "Lock Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 300],
+      "notes": "锁定素材状态为生成中"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.REDINK_API_URL + '/api/outline' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.REDINK_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"topic\": \"{{ $node['Prepare Generation'].json.original_title }}\",\n  \"reference_content\": \"{{ $node['Prepare Generation'].json.original_content }}\",\n  \"template\": \"{{ $node['Prepare Generation'].json.prompt_template }}\"\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "generate-outline",
+      "name": "Generate Outline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300],
+      "notes": "调用RedInk生成大纲"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-outline",
+              "leftValue": "={{ $json.outline || $json.data?.outline }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-outline-result",
+      "name": "Outline Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2250, 300],
+      "notes": "检查大纲生成是否成功"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.REDINK_API_URL + '/api/generate' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.REDINK_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"outline\": {{ JSON.stringify($json.outline || $json.data?.outline) }},\n  \"style\": \"xiaohongshu\",\n  \"image_count\": 6\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "generate-content",
+      "name": "Generate Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 200],
+      "notes": "调用RedInk生成内容和图片"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-content",
+              "leftValue": "={{ $json.content || $json.data?.content }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-content-result",
+      "name": "Content Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2750, 200],
+      "notes": "检查内容生成是否成功"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 转换生成结果为Content记录格式\nconst generateResult = $input.first().json;\nconst sourceData = $node['Prepare Generation'].json;\n\nconst contentRecord = {\n  fields: {\n    source_id: sourceData.record_id,\n    note_id: sourceData.note_id,\n    ai_title: generateResult.title || generateResult.data?.title || sourceData.original_title,\n    ai_content: generateResult.content || generateResult.data?.content || '',\n    ai_images: JSON.stringify(generateResult.images || generateResult.data?.images || []),\n    outline: JSON.stringify(generateResult.outline || $node['Generate Outline'].json.outline || {}),\n    status: '待发布',\n    generated_at: new Date().toISOString()\n  }\n};\n\nreturn [{ json: { record: contentRecord, source_record_id: sourceData.record_id } }];"
+      },
+      "id": "transform-content",
+      "name": "Transform Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3000, 100],
+      "notes": "转换生成结果格式"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_CONTENT_TABLE_ID + '/records' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.record) }}",
+        "options": {}
+      },
+      "id": "save-to-content",
+      "name": "Save to Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3250, 100],
+      "notes": "写入Content表"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_SOURCE_TABLE_ID + '/records/' + $json.source_record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"已生成\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-source-success",
+      "name": "Update Source Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3500, 100],
+      "notes": "更新素材状态为已生成"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_SOURCE_TABLE_ID + '/records/' + $node['Prepare Generation'].json.record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"生成失败\",\n    \"error_message\": \"{{ $json.error?.message || 'Content generation failed' }}\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-source-failed",
+      "name": "Update Source Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2750, 400],
+      "notes": "更新素材状态为生成失败"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, message: 'Generation completed' } }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3750, 100],
+      "notes": "返回成功响应"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, message: 'No sources to process' } }}"
+      },
+      "id": "respond-no-sources",
+      "name": "Respond No Sources",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 500],
+      "notes": "无素材时返回"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Lark Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Lark Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lark Token": {
+      "main": [
+        [
+          {
+            "node": "Query Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Sources": {
+      "main": [
+        [
+          {
+            "node": "Has Sources?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Sources?": {
+      "main": [
+        [
+          {
+            "node": "Get Prompt Template",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Prompt Template": {
+      "main": [
+        [
+          {
+            "node": "Prepare Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Generation": {
+      "main": [
+        [
+          {
+            "node": "Lock Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock Source": {
+      "main": [
+        [
+          {
+            "node": "Generate Outline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Outline": {
+      "main": [
+        [
+          {
+            "node": "Outline Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outline Success?": {
+      "main": [
+        [
+          {
+            "node": "Generate Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Source Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Content": {
+      "main": [
+        [
+          {
+            "node": "Content Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Success?": {
+      "main": [
+        [
+          {
+            "node": "Transform Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Source Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Content": {
+      "main": [
+        [
+          {
+            "node": "Save to Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Content": {
+      "main": [
+        [
+          {
+            "node": "Update Source Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Source Success": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "XHS-Pipeline"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {}
+}

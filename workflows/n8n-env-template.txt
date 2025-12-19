@@ -1,0 +1,32 @@
+# n8n 环境变量配置模板
+# 在 n8n 设置中添加以下环境变量
+
+# ========== 飞书配置 ==========
+LARK_APP_ID=cli_xxx                        # 飞书应用 App ID
+LARK_APP_SECRET=xxx                        # 飞书应用 App Secret
+LARK_APP_TOKEN=xxx                         # 飞书多维表格 App Token
+
+# 飞书表格 ID
+LARK_KEYWORDS_TABLE_ID=tblXxx              # 关键词表
+LARK_TOPICS_TABLE_ID=tblXxx                # 选题表
+LARK_SOURCE_TABLE_ID=tblXxx                # 素材表
+LARK_CONTENT_TABLE_ID=tblXxx               # 内容表
+LARK_PUBLISH_TABLE_ID=tblXxx               # 发布表
+LARK_PROMPTS_TABLE_ID=tblXxx               # 提示词表
+LARK_LOGS_TABLE_ID=tblXxx                  # 日志表
+
+# ========== 爬虫 API 配置 ==========
+CRAWLER_API_URL=http://124.221.251.8:8080  # MediaCrawler API 地址
+CRAWLER_API_KEY=dev-key                    # API 密钥
+
+# ========== RedInk AI 配置 ==========
+REDINK_API_URL=http://xxx:3000             # RedInk 服务地址
+REDINK_API_KEY=xxx                         # RedInk API 密钥
+
+# ========== n8n 配置示例 ==========
+# 在 n8n UI 中: Settings -> Environment Variables
+# 或在 docker-compose.yml 中:
+# environment:
+#   - LARK_APP_ID=cli_xxx
+#   - LARK_APP_SECRET=xxx
+#   - ...

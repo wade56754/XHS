@@ -1,0 +1,630 @@
+{
+  "name": "WF-Publish - XHS内容发布",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300],
+      "notes": "每2小时自动执行"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "xhs-publish",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 500],
+      "webhookId": "xhs-publish",
+      "notes": "手动触发入口"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 检查发布时间窗口 (避开敏感时段)\nconst now = new Date();\nconst hour = now.getHours();\n\n// 推荐发布时间: 7-9, 12-14, 18-22\nconst isGoodTime = (hour >= 7 && hour <= 9) || \n                  (hour >= 12 && hour <= 14) || \n                  (hour >= 18 && hour <= 22);\n\n// 禁止发布时间: 0-6 (凌晨)\nconst isBadTime = hour >= 0 && hour < 7;\n\nreturn [{ \n  json: { \n    currentHour: hour,\n    isGoodTime,\n    isBadTime,\n    canPublish: !isBadTime,\n    message: isBadTime ? '当前为凌晨时段，暂停发布' : '可以发布'\n  } \n}];"
+      },
+      "id": "check-publish-time",
+      "name": "Check Publish Time",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 400],
+      "notes": "检查发布时间窗口"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-can-publish",
+              "leftValue": "={{ $json.canPublish }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "can-publish",
+      "name": "Can Publish?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 400],
+      "notes": "判断是否可以发布"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "={{ $env.LARK_APP_ID }}"
+            },
+            {
+              "name": "app_secret",
+              "value": "={{ $env.LARK_APP_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-lark-token",
+      "name": "Get Lark Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300],
+      "notes": "获取飞书访问令牌"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_CONTENT_TABLE_ID + '/records' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "CurrentValue.[status]=\"待发布\""
+            },
+            {
+              "name": "page_size",
+              "value": "3"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "query-contents",
+      "name": "Query Contents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 300],
+      "notes": "查询待发布的内容 (每次最多3条)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-records",
+              "leftValue": "={{ $json.data.items.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-contents",
+      "name": "Has Contents?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1500, 300],
+      "notes": "检查是否有待发布内容"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取待发布内容\nconst items = $input.first().json.data.items || [];\n\nconst contents = items.map(item => ({\n  record_id: item.record_id,\n  source_id: item.fields.source_id,\n  note_id: item.fields.note_id,\n  ai_title: item.fields.ai_title,\n  ai_content: item.fields.ai_content,\n  ai_images: item.fields.ai_images\n}));\n\nreturn contents.map(c => ({ json: c }));"
+      },
+      "id": "extract-contents",
+      "name": "Extract Contents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 200],
+      "notes": "提取待发布内容数据"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_CONTENT_TABLE_ID + '/records/' + $json.record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"发布中\",\n    \"locked_at\": \"{{ $now.toISO() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "lock-content",
+      "name": "Lock Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 200],
+      "notes": "锁定内容状态为发布中"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 添加随机延迟，模拟人工操作\nconst minDelay = 5000;  // 最小5秒\nconst maxDelay = 15000; // 最大15秒\nconst delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;\n\nawait new Promise(resolve => setTimeout(resolve, delay));\n\nreturn $input.all();"
+      },
+      "id": "random-delay",
+      "name": "Random Delay",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 200],
+      "notes": "随机延迟5-15秒"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRAWLER_API_URL + '/api/publish' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.CRAWLER_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": \"{{ $node['Extract Contents'].json.ai_title }}\",\n  \"content\": \"{{ $node['Extract Contents'].json.ai_content }}\",\n  \"images\": {{ $node['Extract Contents'].json.ai_images || '[]' }},\n  \"note_type\": \"normal\"\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "publish-to-xhs",
+      "name": "Publish to XHS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 200],
+      "notes": "调用爬虫API发布到小红书"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-publish-result",
+      "name": "Publish Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2750, 200],
+      "notes": "检查发布是否成功"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 转换发布结果为Publish记录格式\nconst publishResult = $input.first().json;\nconst contentData = $node['Extract Contents'].json;\n\nconst publishRecord = {\n  fields: {\n    content_id: contentData.record_id,\n    source_id: contentData.source_id,\n    published_note_id: publishResult.data?.note_id || publishResult.note_id || '',\n    published_note_url: publishResult.data?.note_url || publishResult.note_url || '',\n    title: contentData.ai_title,\n    publish_status: '已发布',\n    published_at: new Date().toISOString()\n  }\n};\n\nreturn [{ json: { record: publishRecord, content_record_id: contentData.record_id } }];"
+      },
+      "id": "transform-publish-result",
+      "name": "Transform Publish Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3000, 100],
+      "notes": "转换发布结果格式"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_PUBLISH_TABLE_ID + '/records' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.record) }}",
+        "options": {}
+      },
+      "id": "save-to-publish",
+      "name": "Save to Publish",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3250, 100],
+      "notes": "写入Publish表"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_CONTENT_TABLE_ID + '/records/' + $json.content_record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"已发布\",\n    \"published_at\": \"{{ $now.toISO() }}\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-content-success",
+      "name": "Update Content Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3500, 100],
+      "notes": "更新内容状态为已发布"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_CONTENT_TABLE_ID + '/records/' + $node['Extract Contents'].json.record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"发布失败\",\n    \"error_message\": \"{{ $json.error?.message || 'Publish failed' }}\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-content-failed",
+      "name": "Update Content Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 300],
+      "notes": "更新内容状态为发布失败"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + $env.LARK_APP_TOKEN + '/tables/' + $env.LARK_LOGS_TABLE_ID + '/records' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $node['Get Lark Token'].json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"workflow\": \"WF-Publish\",\n    \"action\": \"publish\",\n    \"status\": \"success\",\n    \"record_id\": \"{{ $json.content_record_id }}\",\n    \"message\": \"发布成功\",\n    \"executed_at\": \"{{ $now.toISO() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "log-success",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3750, 100],
+      "notes": "记录成功日志"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, message: 'Publish completed' } }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [4000, 100],
+      "notes": "返回成功响应"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, message: 'No contents to publish' } }}"
+      },
+      "id": "respond-no-contents",
+      "name": "Respond No Contents",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1750, 400],
+      "notes": "无内容时返回"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, message: $node['Check Publish Time'].json.message } }}"
+      },
+      "id": "respond-bad-time",
+      "name": "Respond Bad Time",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1000, 500],
+      "notes": "非发布时段返回"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Publish Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Publish Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Publish Time": {
+      "main": [
+        [
+          {
+            "node": "Can Publish?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Publish?": {
+      "main": [
+        [
+          {
+            "node": "Get Lark Token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Bad Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lark Token": {
+      "main": [
+        [
+          {
+            "node": "Query Contents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Contents": {
+      "main": [
+        [
+          {
+            "node": "Has Contents?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Contents?": {
+      "main": [
+        [
+          {
+            "node": "Extract Contents",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Contents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Contents": {
+      "main": [
+        [
+          {
+            "node": "Lock Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock Content": {
+      "main": [
+        [
+          {
+            "node": "Random Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Random Delay": {
+      "main": [
+        [
+          {
+            "node": "Publish to XHS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to XHS": {
+      "main": [
+        [
+          {
+            "node": "Publish Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Success?": {
+      "main": [
+        [
+          {
+            "node": "Transform Publish Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Content Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Publish Result": {
+      "main": [
+        [
+          {
+            "node": "Save to Publish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Publish": {
+      "main": [
+        [
+          {
+            "node": "Update Content Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Content Success": {
+      "main": [
+        [
+          {
+            "node": "Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Success": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "XHS-Pipeline"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {}
+}

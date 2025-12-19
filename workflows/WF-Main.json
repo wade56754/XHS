@@ -1,0 +1,800 @@
+{
+  "name": "WF-Main - XHS Pipeline Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 0],
+      "notes": "每5分钟自动触发"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "xhs-pipeline",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 200],
+      "webhookId": "xhs-pipeline",
+      "onError": "continueRegularOutput",
+      "notes": "手动触发: POST /webhook/xhs-pipeline\nBody: { action: 'discovery|extraction|generation|publish|all', target_ids?: [], force?: true }"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "empty"
+      },
+      "id": "merge-triggers",
+      "name": "Merge Triggers",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [250, 100],
+      "notes": "合并定时和手动触发入口"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CRAWLER_API_URL || 'http://124.221.251.8:8080' }}/api/health",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.CRAWLER_API_KEY || 'dev-key' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "health-check",
+      "name": "Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [450, 100],
+      "onError": "continueRegularOutput",
+      "notes": "检查 MediaCrawler API 健康状态"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "crawler-ready-check",
+              "leftValue": "={{ $json.crawler_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-crawler-ready",
+      "name": "IF Crawler Ready",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [650, 100],
+      "notes": "检查 crawler_ready 是否为 true"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRAWLER_API_URL || 'http://124.221.251.8:8080' }}/api/crawler/cookies",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.CRAWLER_API_KEY || 'dev-key' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cookies",
+              "value": "[]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-cookie-refresh",
+      "name": "Trigger Cookie Refresh",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [850, 250],
+      "onError": "continueRegularOutput",
+      "notes": "当爬虫不健康时，触发 Cookie 刷新"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 获取触发来源数据\nconst triggerData = $input.first().json;\nconst webhookBody = triggerData.body || {};\nconst forceAction = webhookBody.action || null;\nconst forceTargetIds = webhookBody.target_ids || [];\nconst forceMode = webhookBody.force || false;\n\n// 配置飞书 API\nconst LARK_API_BASE = $env.LARK_API_BASE || 'https://open.feishu.cn/open-apis/bitable/v1';\nconst LARK_APP_TOKEN = $env.LARK_APP_TOKEN || 'Gq93bAlZ7aSSclsLKdTcYCO2nwh';\n\n// 表格 ID 配置\nconst TABLES = {\n  keywords: $env.KEYWORDS_TABLE_ID || 'tblKeywords',\n  topics: $env.TOPICS_TABLE_ID || 'tblE2SypBdIhJVrR',\n  source: $env.SOURCE_TABLE_ID || 'tblPCp5gqgVFnhLc',\n  content: $env.CONTENT_TABLE_ID || 'tblMYjwzOkYpW4AX'\n};\n\n// 查询条件配置\nconst QUERIES = {\n  discovery: { table: 'keywords', status: '待采集', limit: 5 },\n  extraction: { table: 'topics', status: '待提取', limit: 10 },\n  generation: { table: 'source', status: '待生成', limit: 5 },\n  publish: { table: 'content', status: '待发布', limit: 3 }\n};\n\n// 优先级顺序 (高 → 低)\nconst PRIORITY_ORDER = ['publish', 'generation', 'extraction', 'discovery'];\n\n// 模拟查询结果 (实际应通过 HTTP Request 节点查询飞书)\n// 这里返回结构化数据供后续节点使用\nconst result = {\n  timestamp: new Date().toISOString(),\n  trigger_source: forceAction ? 'webhook' : 'schedule',\n  force_action: forceAction,\n  force_target_ids: forceTargetIds,\n  force_mode: forceMode,\n  queries: QUERIES,\n  tables: TABLES,\n  priority_order: PRIORITY_ORDER,\n  // 待查询的任务\n  pending_queries: PRIORITY_ORDER.map(action => ({\n    action,\n    table_id: TABLES[QUERIES[action].table],\n    status_filter: QUERIES[action].status,\n    limit: QUERIES[action].limit\n  }))\n};\n\n// 如果是强制模式，直接返回指定的 action\nif (forceAction && forceAction !== 'all') {\n  result.selected_action = forceAction;\n  result.skip_query = true;\n}\n\nreturn [result];"
+      },
+      "id": "prepare-queries",
+      "name": "Prepare Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 0],
+      "notes": "准备飞书查询参数和优先级配置"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN || 'Gq93bAlZ7aSSclsLKdTcYCO2nwh' }}/tables/{{ $json.tables.content }}/records?filter=CurrentValue.[status]=\"待发布\"&page_size=3",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LARK_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "query-content",
+      "name": "Query Content (待发布)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1100, -150],
+      "onError": "continueRegularOutput",
+      "notes": "查询待发布内容 (优先级1)"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN || 'Gq93bAlZ7aSSclsLKdTcYCO2nwh' }}/tables/{{ $json.tables.source }}/records?filter=CurrentValue.[status]=\"待生成\"&page_size=5",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LARK_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "query-source",
+      "name": "Query Source (待生成)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1100, 0],
+      "onError": "continueRegularOutput",
+      "notes": "查询待生成内容 (优先级2)"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN || 'Gq93bAlZ7aSSclsLKdTcYCO2nwh' }}/tables/{{ $json.tables.topics }}/records?filter=CurrentValue.[status]=\"待提取\"&page_size=10",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LARK_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "query-topics",
+      "name": "Query Topics (待提取)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1100, 150],
+      "onError": "continueRegularOutput",
+      "notes": "查询待提取选题 (优先级3)"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN || 'Gq93bAlZ7aSSclsLKdTcYCO2nwh' }}/tables/{{ $json.tables.keywords }}/records?filter=CurrentValue.[status]=\"待采集\"&page_size=5",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LARK_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "query-keywords",
+      "name": "Query Keywords (待采集)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1100, 300],
+      "onError": "continueRegularOutput",
+      "notes": "查询待采集关键词 (优先级4)"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-queries",
+      "name": "Merge Query Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1350, 100],
+      "notes": "合并4个表的查询结果"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 获取所有查询结果\nconst items = $input.all();\nconst prepareData = items[0]?.json || {};\n\n// 解析查询结果\nconst queryResults = {\n  publish: items[1]?.json?.data?.items || [],\n  generation: items[2]?.json?.data?.items || [],\n  extraction: items[3]?.json?.data?.items || [],\n  discovery: items[4]?.json?.data?.items || []\n};\n\n// 优先级顺序\nconst PRIORITY_ORDER = ['publish', 'generation', 'extraction', 'discovery'];\n\n// 如果是强制模式，直接使用指定的 action\nif (prepareData.skip_query && prepareData.selected_action) {\n  return [{\n    action: prepareData.selected_action,\n    target_ids: prepareData.force_target_ids || [],\n    records: [],\n    force_mode: true,\n    timestamp: new Date().toISOString()\n  }];\n}\n\n// 按优先级选择要执行的任务\nlet selectedAction = 'none';\nlet selectedRecords = [];\n\nfor (const action of PRIORITY_ORDER) {\n  const records = queryResults[action];\n  if (records && records.length > 0) {\n    selectedAction = action;\n    selectedRecords = records.map(r => ({\n      record_id: r.record_id,\n      fields: r.fields\n    }));\n    break;\n  }\n}\n\n// 生成执行日志\nconst summary = {\n  publish_count: queryResults.publish.length,\n  generation_count: queryResults.generation.length,\n  extraction_count: queryResults.extraction.length,\n  discovery_count: queryResults.discovery.length,\n  total_pending: Object.values(queryResults).reduce((sum, arr) => sum + arr.length, 0)\n};\n\nreturn [{\n  action: selectedAction,\n  records: selectedRecords,\n  record_count: selectedRecords.length,\n  summary: summary,\n  force_mode: false,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "id": "priority-dispatch",
+      "name": "Priority Dispatch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1550, 100],
+      "notes": "优先级分发逻辑: Publish > Generation > Extraction > Discovery"
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "publish",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Publish"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "generation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Generation"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "extraction",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Extraction"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "discovery",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Discovery"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "No Task"
+        }
+      },
+      "id": "switch-router",
+      "name": "Switch Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [1750, 100],
+      "notes": "根据 action 路由到对应的子工作流"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.WF_PUBLISH_ID || 'WF-Publish' }}",
+        "options": {}
+      },
+      "id": "execute-publish",
+      "name": "Execute WF-Publish",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2000, -100],
+      "notes": "执行发布子工作流"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.WF_GENERATION_ID || 'WF-Generation' }}",
+        "options": {}
+      },
+      "id": "execute-generation",
+      "name": "Execute WF-Generation",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2000, 50],
+      "notes": "执行 AI 内容生成子工作流"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.WF_EXTRACTION_ID || 'WF-Extraction' }}",
+        "options": {}
+      },
+      "id": "execute-extraction",
+      "name": "Execute WF-Extraction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2000, 200],
+      "notes": "执行内容提取子工作流"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.WF_DISCOVERY_ID || 'WF-Discovery' }}",
+        "options": {}
+      },
+      "id": "execute-discovery",
+      "name": "Execute WF-Discovery",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2000, 350],
+      "notes": "执行内容发现子工作流"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 无待处理任务时的日志\nconst input = $input.first().json;\n\nreturn [{\n  status: 'idle',\n  message: 'No pending tasks',\n  summary: input.summary || {},\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "id": "no-task-handler",
+      "name": "No Task Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 500],
+      "notes": "无待处理任务时的处理"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "empty"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [2250, 200],
+      "notes": "合并所有子工作流执行结果"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行日志\nconst results = $input.all();\nconst firstResult = results[0]?.json || {};\n\nconst logEntry = {\n  workflow_id: $workflow.id,\n  workflow_name: 'WF-Main',\n  execution_id: $execution.id,\n  timestamp: new Date().toISOString(),\n  action: firstResult.action || 'unknown',\n  status: firstResult.status || 'completed',\n  record_count: firstResult.record_count || 0,\n  summary: firstResult.summary || {},\n  duration_ms: Date.now() - new Date($execution.startedAt).getTime(),\n  error: firstResult.error || null\n};\n\nreturn [logEntry];"
+      },
+      "id": "prepare-log",
+      "name": "Prepare Log Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 200],
+      "notes": "准备执行日志数据"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN || 'Gq93bAlZ7aSSclsLKdTcYCO2nwh' }}/tables/{{ $env.LOGS_TABLE_ID || 'tbl8xTUEtAQjxP4k' }}/records",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LARK_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"workflow_name\": \"{{ $json.workflow_name }}\",\n    \"execution_id\": \"{{ $json.execution_id }}\",\n    \"action\": \"{{ $json.action }}\",\n    \"status\": \"{{ $json.status }}\",\n    \"record_count\": {{ $json.record_count }},\n    \"duration_ms\": {{ $json.duration_ms }},\n    \"timestamp\": \"{{ $json.timestamp }}\",\n    \"summary\": \"{{ JSON.stringify($json.summary) }}\"\n  }\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "log-to-feishu",
+      "name": "Log to Feishu",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2650, 200],
+      "onError": "continueRegularOutput",
+      "notes": "将执行日志写入飞书 ExecutionLogs 表"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Merge Triggers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Merge Triggers",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Triggers": {
+      "main": [
+        [
+          {
+            "node": "Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Check": {
+      "main": [
+        [
+          {
+            "node": "IF Crawler Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Crawler Ready": {
+      "main": [
+        [
+          {
+            "node": "Prepare Queries",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Trigger Cookie Refresh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Cookie Refresh": {
+      "main": [
+        [
+          {
+            "node": "Prepare Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Queries": {
+      "main": [
+        [
+          {
+            "node": "Query Content (待发布)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Source (待生成)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Topics (待提取)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Keywords (待采集)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Content (待发布)": {
+      "main": [
+        [
+          {
+            "node": "Merge Query Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Source (待生成)": {
+      "main": [
+        [
+          {
+            "node": "Merge Query Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Query Topics (待提取)": {
+      "main": [
+        [
+          {
+            "node": "Merge Query Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Query Keywords (待采集)": {
+      "main": [
+        [
+          {
+            "node": "Merge Query Results",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge Query Results": {
+      "main": [
+        [
+          {
+            "node": "Priority Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Priority Dispatch": {
+      "main": [
+        [
+          {
+            "node": "Switch Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Router": {
+      "main": [
+        [
+          {
+            "node": "Execute WF-Publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute WF-Generation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute WF-Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute WF-Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Task Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute WF-Publish": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute WF-Generation": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Execute WF-Extraction": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Execute WF-Discovery": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "No Task Handler": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Log to Feishu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "XHS-Pipeline"
+    },
+    {
+      "name": "Main-Controller"
+    }
+  ],
+  "triggerCount": 2,
+  "versionId": "1.0.0"
+}
