@@ -2,9 +2,9 @@
   "mcpServers": {
     "n8n-server": {
       "type": "http",
-      "url": "http://144.202.25.52:5678/mcp-server/http",
+      "url": "https://n8n.primetat.com/mcp-server/http",
       "headers": {
-        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1NGZkOTQxMS1iZGZmLTQyMDktYWNkMi04ZWVkNDQyMmI1YTciLCJpc3MiOiJuOG4iLCJhdWQiOiJtY3Atc2VydmVyLWFwaSIsImp0aSI6ImQ3NTA5Yjg4LTc2NjMtNDMyOC04OWVmLTAwZTFiM2YzMTVmZiIsImlhdCI6MTc2NTQyNjY3NX0.uXvGpoNYGL8pY8oCnjtIg4UjC6bridwUgRykhat4lsc"
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2Mjk0ZjI4ZC1kNjRjLTQ3NzMtOTMwZi1hMTc4MTllNTU3NjgiLCJpc3MiOiJuOG4iLCJhdWQiOiJtY3Atc2VydmVyLWFwaSIsImp0aSI6IjJhMzY3NThjLWY5MDItNDhjMS04MDg3LWI5OGNhYzc2MDA4YyIsImlhdCI6MTc2NjExNzE1MH0.9uSlZhJOLEoorf7Sb4S6y6Mcrs1dphlwSZOF0xsbbso"
       }
     }
   }

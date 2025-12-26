@@ -45,3 +45,12 @@ Thumbs.db
 
 # MCP配置（含凭证）
 .mcp.json
+
+# 临时文件
+temp_*.py
+temp_*.txt
+
+# 二维码图片（登录用）
+qr_login.png
+qrcode.png
+xhs_*.png

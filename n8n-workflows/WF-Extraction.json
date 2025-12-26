@@ -1,0 +1,363 @@
+{
+  "name": "XHS-Extraction",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "workflow-trigger",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract topic records from input\nconst records = $input.first().json.records || [];\n\nif (records.length === 0) {\n  return [{ json: { success: false, message: 'No records to process' } }];\n}\n\n// Map to individual items\nreturn records.map(record => ({\n  json: {\n    record_id: record.record_id,\n    note_id: record.fields?.note_id || '',\n    title: record.fields?.title || '',\n    keyword_id: record.fields?.keyword_id || ''\n  }\n}));"
+      },
+      "id": "extract-topics",
+      "name": "Extract Topics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.TOPICS_TABLE_ID }}/records/{{ $json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"提取中\",\n    \"locked_at\": \"{{ $now.toISO() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "lock-record",
+      "name": "Lock Record (提取中)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRAWLER_API_URL }}/api/note/detail",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"note_ids\": [\"{{ $('Extract Topics').item.json.note_id }}\"]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "get-note-detail",
+      "name": "Get Note Detail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "crawler-api-key",
+          "name": "Crawler API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "has-items",
+              "leftValue": "={{ $json.data?.items?.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-detail-success",
+      "name": "IF Detail Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Transform note detail to Source record\nconst detailResult = $input.first().json;\nconst noteDetail = detailResult.data?.items?.[0] || {};\nconst topicRecordId = $('Extract Topics').item.json.record_id;\nconst noteId = $('Extract Topics').item.json.note_id;\n\n// Extract content\nconst sourceRecord = {\n  fields: {\n    topic_id: topicRecordId,\n    note_id: noteId,\n    title: noteDetail.title || noteDetail.display_title || '',\n    content: noteDetail.desc || noteDetail.note_desc || '',\n    note_type: noteDetail.type === 'video' ? '视频' : '图文',\n    images: JSON.stringify(noteDetail.image_list || noteDetail.images || []),\n    video_url: noteDetail.video?.url || '',\n    likes: noteDetail.liked_count || noteDetail.likes || 0,\n    collects: noteDetail.collected_count || noteDetail.collects || 0,\n    comments: noteDetail.comment_count || noteDetail.comments || 0,\n    shares: noteDetail.share_count || noteDetail.shares || 0,\n    author_id: noteDetail.user?.user_id || '',\n    author_name: noteDetail.user?.nickname || '',\n    author_avatar: noteDetail.user?.avatar || '',\n    tags: JSON.stringify(noteDetail.tag_list || []),\n    status: '待生成',\n    extracted_at: new Date().toISOString()\n  }\n};\n\nreturn [{ json: sourceRecord }];"
+      },
+      "id": "transform-to-source",
+      "name": "Transform to Source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.SOURCE_TABLE_ID }}/records",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "create-source",
+      "name": "Create Source Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.TOPICS_TABLE_ID }}/records/{{ $('Extract Topics').item.json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"已提取\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-topic-success",
+      "name": "Update Topic (已提取)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle extraction failure\nconst error = $input.first().json;\nreturn [{ json: {\n  success: false,\n  record_id: $('Extract Topics').item.json.record_id,\n  note_id: $('Extract Topics').item.json.note_id,\n  error: error.error?.message || 'Note detail not available'\n} }];"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.TOPICS_TABLE_ID }}/records/{{ $json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"提取失败\",\n    \"error_message\": \"{{ $json.error }}\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-topic-failed",
+      "name": "Update Topic (提取失败)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare output summary\nconst results = $input.all();\nlet successCount = 0;\nlet failCount = 0;\n\nfor (const item of results) {\n  if (item.json.success !== false) {\n    successCount++;\n  } else {\n    failCount++;\n  }\n}\n\nreturn [{ json: {\n  action: 'extraction',\n  success: failCount === 0,\n  topics_processed: results.length,\n  sources_created: successCount,\n  failed: failCount,\n  message: `Extracted ${successCount} notes, ${failCount} failed`\n} }];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 300]
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Topics": {
+      "main": [
+        [
+          {
+            "node": "Lock Record (提取中)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock Record (提取中)": {
+      "main": [
+        [
+          {
+            "node": "Get Note Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Note Detail": {
+      "main": [
+        [
+          {
+            "node": "IF Detail Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Detail Success": {
+      "main": [
+        [
+          {
+            "node": "Transform to Source",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform to Source": {
+      "main": [
+        [
+          {
+            "node": "Create Source Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Source Record": {
+      "main": [
+        [
+          {
+            "node": "Update Topic (已提取)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Topic (已提取)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Update Topic (提取失败)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Topic (提取失败)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "XHS-Pipeline",
+      "id": "xhs-pipeline"
+    }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "xhs-automation"
+  },
+  "pinData": {}
+}

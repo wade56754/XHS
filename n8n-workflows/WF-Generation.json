@@ -1,0 +1,455 @@
+{
+  "name": "XHS-Generation",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "workflow-trigger",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract source records from input\nconst records = $input.first().json.records || [];\n\nif (records.length === 0) {\n  return [{ json: { success: false, message: 'No records to process' } }];\n}\n\nreturn records.map(record => ({\n  json: {\n    record_id: record.record_id,\n    topic_id: record.fields?.topic_id || '',\n    title: record.fields?.title || '',\n    content: record.fields?.content || '',\n    note_type: record.fields?.note_type || '图文',\n    images: record.fields?.images || '[]'\n  }\n}));"
+      },
+      "id": "extract-sources",
+      "name": "Extract Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.SOURCE_TABLE_ID }}/records/{{ $json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"生成中\",\n    \"locked_at\": \"{{ $now.toISO() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "lock-record",
+      "name": "Lock Record (生成中)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.PROMPTS_TABLE_ID }}/records",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "CurrentValue.[is_active] = true"
+            },
+            {
+              "name": "page_size",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-prompt-template",
+      "name": "Get Prompt Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare outline request for RedInk\nconst source = $('Extract Sources').item.json;\nconst promptData = $input.first().json;\nconst template = promptData.data?.items?.[0]?.fields || {};\n\nconst outlineRequest = {\n  topic: source.title,\n  original_content: source.content,\n  style: template.style || 'casual',\n  tone: template.tone || 'friendly',\n  template_prompt: template.prompt || '',\n  note_type: source.note_type\n};\n\nreturn [{ json: outlineRequest }];"
+      },
+      "id": "prepare-outline-request",
+      "name": "Prepare Outline Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.REDINK_API_URL }}/api/outline",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "generate-outline",
+      "name": "Generate Outline (RedInk)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redink-api-key",
+          "name": "RedInk API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-outline",
+              "leftValue": "={{ $json.outline !== undefined }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-outline-success",
+      "name": "IF Outline Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.REDINK_API_URL }}/api/generate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"outline\": {{ JSON.stringify($json.outline) }},\n  \"style\": \"{{ $('Prepare Outline Request').item.json.style }}\",\n  \"image_count\": 3\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "generate-content",
+      "name": "Generate Content (RedInk SSE)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redink-api-key",
+          "name": "RedInk API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process SSE response and extract generated content\nconst response = $input.first().json;\n\n// Parse SSE events if needed\nlet generatedContent = {\n  title: response.title || response.data?.title || '',\n  content: response.content || response.data?.content || '',\n  images: response.images || response.data?.images || []\n};\n\n// If SSE format, parse events\nif (typeof response === 'string' && response.includes('event:')) {\n  const events = response.split('\\n\\n').filter(e => e.trim());\n  for (const event of events) {\n    if (event.includes('event: complete')) {\n      const dataMatch = event.match(/data: (.+)/);\n      if (dataMatch) {\n        const data = JSON.parse(dataMatch[1]);\n        generatedContent = {\n          title: data.title || '',\n          content: data.content || '',\n          images: data.images || []\n        };\n      }\n    }\n  }\n}\n\nreturn [{ json: generatedContent }];"
+      },
+      "id": "parse-generated",
+      "name": "Parse Generated Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.CONTENT_TABLE_ID }}/records",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"source_id\": \"{{ $('Extract Sources').item.json.record_id }}\",\n    \"original_title\": \"{{ $('Extract Sources').item.json.title }}\",\n    \"ai_title\": \"{{ $json.title }}\",\n    \"ai_content\": \"{{ $json.content }}\",\n    \"ai_images\": {{ JSON.stringify($json.images) }},\n    \"status\": \"待发布\",\n    \"generated_at\": \"{{ $now.toISO() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "create-content",
+      "name": "Create Content Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.SOURCE_TABLE_ID }}/records/{{ $('Extract Sources').item.json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"已生成\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-source-success",
+      "name": "Update Source (已生成)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle generation failure\nreturn [{ json: {\n  success: false,\n  record_id: $('Extract Sources').item.json.record_id,\n  error: 'Content generation failed'\n} }];"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 400]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.SOURCE_TABLE_ID }}/records/{{ $json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"生成失败\",\n    \"error_message\": \"{{ $json.error }}\",\n    \"locked_at\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-source-failed",
+      "name": "Update Source (生成失败)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare output summary\nconst results = $input.all();\nlet successCount = 0;\nlet failCount = 0;\n\nfor (const item of results) {\n  if (item.json.success !== false) {\n    successCount++;\n  } else {\n    failCount++;\n  }\n}\n\nreturn [{ json: {\n  action: 'generation',\n  success: failCount === 0,\n  sources_processed: results.length,\n  content_created: successCount,\n  failed: failCount,\n  message: `Generated ${successCount} content pieces, ${failCount} failed`\n} }];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 300]
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Sources": {
+      "main": [
+        [
+          {
+            "node": "Lock Record (生成中)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock Record (生成中)": {
+      "main": [
+        [
+          {
+            "node": "Get Prompt Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Prompt Template": {
+      "main": [
+        [
+          {
+            "node": "Prepare Outline Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Outline Request": {
+      "main": [
+        [
+          {
+            "node": "Generate Outline (RedInk)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Outline (RedInk)": {
+      "main": [
+        [
+          {
+            "node": "IF Outline Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Outline Success": {
+      "main": [
+        [
+          {
+            "node": "Generate Content (RedInk SSE)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Content (RedInk SSE)": {
+      "main": [
+        [
+          {
+            "node": "Parse Generated Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Generated Content": {
+      "main": [
+        [
+          {
+            "node": "Create Content Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Content Record": {
+      "main": [
+        [
+          {
+            "node": "Update Source (已生成)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Source (已生成)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Update Source (生成失败)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Source (生成失败)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "XHS-Pipeline",
+      "id": "xhs-pipeline"
+    }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "xhs-automation"
+  },
+  "pinData": {}
+}

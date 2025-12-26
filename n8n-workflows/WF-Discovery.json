@@ -1,0 +1,354 @@
+{
+  "name": "XHS-Discovery",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "workflow-trigger",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract records from input\nconst records = $input.first().json.records || [];\n\nif (records.length === 0) {\n  return [{ json: { success: false, message: 'No records to process' } }];\n}\n\n// Map to individual items for processing\nreturn records.map(record => ({\n  json: {\n    record_id: record.record_id,\n    keyword: record.fields?.keyword || '',\n    category: record.fields?.category || '',\n    min_likes: record.fields?.min_likes || 100,\n    crawl_limit: record.fields?.crawl_limit || 20,\n    priority: record.fields?.priority || 5\n  }\n}));"
+      },
+      "id": "extract-keywords",
+      "name": "Extract Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.KEYWORDS_TABLE_ID }}/records/{{ $json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"采集中\",\n    \"locked_at\": \"{{ $now.toISO() }}\",\n    \"locked_by\": \"{{ $workflow.id }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "lock-record",
+      "name": "Lock Record (采集中)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRAWLER_API_URL }}/api/search/human",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"keyword\": \"{{ $('Extract Keywords').item.json.keyword }}\",\n  \"limit\": {{ $('Extract Keywords').item.json.crawl_limit }}\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "search-xhs",
+      "name": "Search XHS (Human)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "crawler-api-key",
+          "name": "Crawler API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-search-success",
+      "name": "IF Search Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter results by min_likes and transform to Feishu records\nconst searchResult = $input.first().json;\nconst items = searchResult.data?.items || [];\nconst minLikes = $('Extract Keywords').item.json.min_likes || 100;\nconst keywordRecordId = $('Extract Keywords').item.json.record_id;\nconst keyword = $('Extract Keywords').item.json.keyword;\n\nconst filteredItems = items.filter(item => {\n  // 如果有点赞数信息则过滤，否则保留\n  const likes = item.likes || item.liked_count || 0;\n  return likes >= minLikes || likes === 0; // 0 means unknown, keep it\n});\n\nif (filteredItems.length === 0) {\n  return [{ json: { success: true, topics_count: 0, message: 'No items passed filter' } }];\n}\n\n// Transform to Feishu topic records\nconst topicRecords = filteredItems.map(item => ({\n  fields: {\n    keyword_id: keywordRecordId,\n    keyword: keyword,\n    note_id: item.note_id || item.id,\n    title: item.title || '',\n    author: item.author || item.nickname || '',\n    likes: item.likes || item.liked_count || 0,\n    cover_url: item.cover || item.cover_url || '',\n    note_url: `https://www.xiaohongshu.com/explore/${item.note_id || item.id}`,\n    status: '待提取',\n    crawled_at: new Date().toISOString()\n  }\n}));\n\nreturn [{ json: { records: topicRecords, count: topicRecords.length } }];"
+      },
+      "id": "filter-and-transform",
+      "name": "Filter & Transform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.TOPICS_TABLE_ID }}/records/batch_create",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ records: $json.records }) }}",
+        "options": {}
+      },
+      "id": "batch-create-topics",
+      "name": "Batch Create Topics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.KEYWORDS_TABLE_ID }}/records/{{ $('Extract Keywords').item.json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"已采集\",\n    \"last_crawl_time\": \"{{ $now.toISO() }}\",\n    \"locked_at\": null,\n    \"locked_by\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-keyword-success",
+      "name": "Update Keyword (已采集)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle search failure\nconst error = $input.first().json;\nconst errorMessage = error.error?.message || 'Unknown error';\n\nreturn [{ json: {\n  success: false,\n  error: errorMessage,\n  record_id: $('Extract Keywords').item.json.record_id,\n  keyword: $('Extract Keywords').item.json.keyword\n} }];"
+      },
+      "id": "handle-error",
+      "name": "Handle Search Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.KEYWORDS_TABLE_ID }}/records/{{ $json.record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"status\": \"采集失败\",\n    \"error_message\": \"{{ $json.error }}\",\n    \"retry_count\": {{ ($('Extract Keywords').item.json.retry_count || 0) + 1 }},\n    \"locked_at\": null,\n    \"locked_by\": null\n  }\n}",
+        "options": {}
+      },
+      "id": "update-keyword-failed",
+      "name": "Update Keyword (采集失败)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "feishu-token",
+          "name": "Feishu Token"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare output summary\nconst results = $input.all();\nlet successCount = 0;\nlet failCount = 0;\nlet topicsCreated = 0;\n\nfor (const item of results) {\n  if (item.json.success !== false) {\n    successCount++;\n    topicsCreated += item.json.count || 0;\n  } else {\n    failCount++;\n  }\n}\n\nreturn [{ json: {\n  action: 'discovery',\n  success: failCount === 0,\n  keywords_processed: results.length,\n  keywords_success: successCount,\n  keywords_failed: failCount,\n  topics_created: topicsCreated,\n  message: `Processed ${results.length} keywords, created ${topicsCreated} topics`\n} }];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 300]
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Keywords": {
+      "main": [
+        [
+          {
+            "node": "Lock Record (采集中)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock Record (采集中)": {
+      "main": [
+        [
+          {
+            "node": "Search XHS (Human)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search XHS (Human)": {
+      "main": [
+        [
+          {
+            "node": "IF Search Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Search Success": {
+      "main": [
+        [
+          {
+            "node": "Filter & Transform",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Search Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Transform": {
+      "main": [
+        [
+          {
+            "node": "Batch Create Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Create Topics": {
+      "main": [
+        [
+          {
+            "node": "Update Keyword (已采集)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Keyword (已采集)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Search Error": {
+      "main": [
+        [
+          {
+            "node": "Update Keyword (采集失败)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Keyword (采集失败)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "XHS-Pipeline",
+      "id": "xhs-pipeline"
+    }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "xhs-automation"
+  },
+  "pinData": {}
+}

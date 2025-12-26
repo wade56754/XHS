@@ -19,6 +19,8 @@ services:
       - WEBHOOK_URL=https://${N8N_HOST}/
       - GENERIC_TIMEZONE=Asia/Shanghai
       - TZ=Asia/Shanghai
+      # Gemini API for AI image generation
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     volumes:
       - ./n8n_data:/home/node/.n8n
       - ./backups:/backups
@@ -53,7 +55,7 @@ services:
     container_name: redink
     restart: unless-stopped
     ports:
-      - "5001:5000"
+      - "12398:12398"
     environment:
       # AI 文本生成配置
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
@@ -73,7 +75,7 @@ services:
     networks:
       - n8n-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:12398/"]
       interval: 30s
       timeout: 10s
       retries: 3

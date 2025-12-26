@@ -1,0 +1,491 @@
+{
+  "name": "WF-Main - XHS 主控制器",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "定时触发 (每5分钟)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook 手动触发",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 200],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "xhs-pipeline",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "xhs-pipeline",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "merge-triggers",
+      "name": "合并入口",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [250, 100],
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input1"
+      }
+    },
+    {
+      "id": "health-check",
+      "name": "爬虫健康检查",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [500, 100],
+      "parameters": {
+        "method": "GET",
+        "url": "http://124.221.251.8:8080/api/health",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "dev-key"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "id": "check-crawler-ready",
+      "name": "检查爬虫状态",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [750, 100],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "crawler-ready-check",
+              "leftValue": "={{ $json.crawler_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "get-lark-token",
+      "name": "获取飞书Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1000, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"app_id\": \"{{ $env.LARK_APP_ID }}\", \"app_secret\": \"{{ $env.LARK_APP_SECRET }}\"}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "id": "query-keywords",
+      "name": "查询Keywords表",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1250, -150],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.KEYWORDS_TABLE_ID }}/records/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('获取飞书Token').item.json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filter\": {\n    \"conjunction\": \"and\",\n    \"conditions\": [\n      {\n        \"field_name\": \"status\",\n        \"operator\": \"is\",\n        \"value\": [\"待采集\"]\n      }\n    ]\n  },\n  \"page_size\": 5\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "query-topics",
+      "name": "查询Topics表",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1250, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.TOPICS_TABLE_ID }}/records/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('获取飞书Token').item.json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filter\": {\n    \"conjunction\": \"and\",\n    \"conditions\": [\n      {\n        \"field_name\": \"status\",\n        \"operator\": \"is\",\n        \"value\": [\"待提取\"]\n      }\n    ]\n  },\n  \"page_size\": 10\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "query-source",
+      "name": "查询Source表",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1250, 150],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.SOURCE_TABLE_ID }}/records/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('获取飞书Token').item.json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filter\": {\n    \"conjunction\": \"and\",\n    \"conditions\": [\n      {\n        \"field_name\": \"status\",\n        \"operator\": \"is\",\n        \"value\": [\"待生成\"]\n      }\n    ]\n  },\n  \"page_size\": 5\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "query-content",
+      "name": "查询Content表",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1250, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.CONTENT_TABLE_ID }}/records/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('获取飞书Token').item.json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filter\": {\n    \"conjunction\": \"and\",\n    \"conditions\": [\n      {\n        \"field_name\": \"status\",\n        \"operator\": \"is\",\n        \"value\": [\"待发布\"]\n      }\n    ]\n  },\n  \"page_size\": 3\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "priority-dispatch",
+      "name": "优先级分发",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 100],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// 获取各表查询结果\nconst keywords = $('查询Keywords表').all();\nconst topics = $('查询Topics表').all();\nconst source = $('查询Source表').all();\nconst content = $('查询Content表').all();\n\n// 提取记录数\nconst keywordsCount = keywords[0]?.json?.data?.items?.length || 0;\nconst topicsCount = topics[0]?.json?.data?.items?.length || 0;\nconst sourceCount = source[0]?.json?.data?.items?.length || 0;\nconst contentCount = content[0]?.json?.data?.items?.length || 0;\n\n// 优先级分发: Publish > Generation > Extraction > Discovery\nlet action = 'skip';\nlet records = [];\nlet table_id = '';\n\nif (contentCount > 0) {\n  action = 'publish';\n  records = content[0].json.data.items;\n  table_id = $env.CONTENT_TABLE_ID;\n} else if (sourceCount > 0) {\n  action = 'generation';\n  records = source[0].json.data.items;\n  table_id = $env.SOURCE_TABLE_ID;\n} else if (topicsCount > 0) {\n  action = 'extraction';\n  records = topics[0].json.data.items;\n  table_id = $env.TOPICS_TABLE_ID;\n} else if (keywordsCount > 0) {\n  action = 'discovery';\n  records = keywords[0].json.data.items;\n  table_id = $env.KEYWORDS_TABLE_ID;\n}\n\nreturn [{\n  json: {\n    action,\n    records,\n    table_id,\n    counts: {\n      keywords: keywordsCount,\n      topics: topicsCount,\n      source: sourceCount,\n      content: contentCount\n    },\n    timestamp: new Date().toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "action-switch",
+      "name": "路由分发",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [1750, 100],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "publish",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "publish", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "generation",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "generation", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "extraction",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "extraction", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "discovery",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "discovery", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      }
+    },
+    {
+      "id": "exec-publish",
+      "name": "执行 WF-Publish",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2000, -100],
+      "parameters": {
+        "source": "database",
+        "workflowId": "={{ $env.WF_PUBLISH_ID }}"
+      }
+    },
+    {
+      "id": "exec-generation",
+      "name": "执行 WF-Generation",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2000, 50],
+      "parameters": {
+        "source": "database",
+        "workflowId": "={{ $env.WF_GENERATION_ID }}"
+      }
+    },
+    {
+      "id": "exec-extraction",
+      "name": "执行 WF-Extraction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2000, 200],
+      "parameters": {
+        "source": "database",
+        "workflowId": "={{ $env.WF_EXTRACTION_ID }}"
+      }
+    },
+    {
+      "id": "exec-discovery",
+      "name": "执行 WF-Discovery",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2000, 350],
+      "parameters": {
+        "source": "database",
+        "workflowId": "={{ $env.WF_DISCOVERY_ID }}"
+      }
+    },
+    {
+      "id": "skip-action",
+      "name": "无待处理任务",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2000, 500],
+      "parameters": {}
+    },
+    {
+      "id": "merge-results",
+      "name": "合并执行结果",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [2250, 200],
+      "parameters": {
+        "mode": "chooseBranch"
+      }
+    },
+    {
+      "id": "log-execution",
+      "name": "记录执行日志",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2500, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.LOGS_TABLE_ID }}/records",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('获取飞书Token').item.json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"workflow\": \"WF-Main\",\n    \"action\": \"{{ $('优先级分发').item.json.action }}\",\n    \"status\": \"completed\",\n    \"execution_time\": \"{{ $now.toISO() }}\",\n    \"details\": \"{{ JSON.stringify($('优先级分发').item.json.counts) }}\"\n  }\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "crawler-not-ready",
+      "name": "爬虫未就绪告警",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1000, 250],
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"app_id\": \"{{ $env.LARK_APP_ID }}\",\n  \"app_secret\": \"{{ $env.LARK_APP_SECRET }}\"\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "log-crawler-error",
+      "name": "记录爬虫错误",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1250, 250],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://open.feishu.cn/open-apis/bitable/v1/apps/{{ $env.LARK_APP_TOKEN }}/tables/{{ $env.LOGS_TABLE_ID }}/records",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('爬虫未就绪告警').item.json.tenant_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"fields\": {\n    \"workflow\": \"WF-Main\",\n    \"action\": \"health_check\",\n    \"status\": \"error\",\n    \"execution_time\": \"{{ $now.toISO() }}\",\n    \"details\": \"爬虫未就绪，crawler_ready=false\"\n  }\n}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "定时触发 (每5分钟)": {
+      "main": [[{"node": "合并入口", "type": "main", "index": 0}]]
+    },
+    "Webhook 手动触发": {
+      "main": [[{"node": "合并入口", "type": "main", "index": 1}]]
+    },
+    "合并入口": {
+      "main": [[{"node": "爬虫健康检查", "type": "main", "index": 0}]]
+    },
+    "爬虫健康检查": {
+      "main": [[{"node": "检查爬虫状态", "type": "main", "index": 0}]]
+    },
+    "检查爬虫状态": {
+      "main": [
+        [{"node": "获取飞书Token", "type": "main", "index": 0}],
+        [{"node": "爬虫未就绪告警", "type": "main", "index": 0}]
+      ]
+    },
+    "获取飞书Token": {
+      "main": [[
+        {"node": "查询Keywords表", "type": "main", "index": 0},
+        {"node": "查询Topics表", "type": "main", "index": 0},
+        {"node": "查询Source表", "type": "main", "index": 0},
+        {"node": "查询Content表", "type": "main", "index": 0}
+      ]]
+    },
+    "查询Keywords表": {
+      "main": [[{"node": "优先级分发", "type": "main", "index": 0}]]
+    },
+    "查询Topics表": {
+      "main": [[{"node": "优先级分发", "type": "main", "index": 0}]]
+    },
+    "查询Source表": {
+      "main": [[{"node": "优先级分发", "type": "main", "index": 0}]]
+    },
+    "查询Content表": {
+      "main": [[{"node": "优先级分发", "type": "main", "index": 0}]]
+    },
+    "优先级分发": {
+      "main": [[{"node": "路由分发", "type": "main", "index": 0}]]
+    },
+    "路由分发": {
+      "main": [
+        [{"node": "执行 WF-Publish", "type": "main", "index": 0}],
+        [{"node": "执行 WF-Generation", "type": "main", "index": 0}],
+        [{"node": "执行 WF-Extraction", "type": "main", "index": 0}],
+        [{"node": "执行 WF-Discovery", "type": "main", "index": 0}],
+        [{"node": "无待处理任务", "type": "main", "index": 0}]
+      ]
+    },
+    "执行 WF-Publish": {
+      "main": [[{"node": "合并执行结果", "type": "main", "index": 0}]]
+    },
+    "执行 WF-Generation": {
+      "main": [[{"node": "合并执行结果", "type": "main", "index": 1}]]
+    },
+    "执行 WF-Extraction": {
+      "main": [[{"node": "合并执行结果", "type": "main", "index": 2}]]
+    },
+    "执行 WF-Discovery": {
+      "main": [[{"node": "合并执行结果", "type": "main", "index": 3}]]
+    },
+    "无待处理任务": {
+      "main": [[{"node": "合并执行结果", "type": "main", "index": 4}]]
+    },
+    "合并执行结果": {
+      "main": [[{"node": "记录执行日志", "type": "main", "index": 0}]]
+    },
+    "爬虫未就绪告警": {
+      "main": [[{"node": "记录爬虫错误", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2025-12-19T09:00:00.000Z",
+  "versionId": "1"
+}
